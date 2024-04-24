@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = [ "audio-agent" ]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+authors = ["Ma Jian"]
