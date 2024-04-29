@@ -28,7 +28,6 @@ tokenizers = "0.19.1"
 [dev-dependencies]
 anyhow = "1.0.82"
 hound = "3.5"
-ringbuf = "0.3.3"
 symphonia = "0.5.4"
 tracing-chrome = "0.7.2"
 tracing-log = "0.2.0"

@@ -1,10 +1,10 @@
 use anyhow::Result;
-use audio_agent::{
-    decoder::Decoder,
-    device::{AudioChunk, AudioDevice},
-    model::WhichModel,
-};
 use clap::Parser;
+
+use audio_agent::model::WhichModel;
+
+mod app;
+mod decoder;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -46,10 +46,6 @@ struct Args {
     /// Timestamps mode, this is not fully implemented yet.
     #[arg(long)]
     timestamps: bool,
-
-    /// Print the full DecodingResult structure rather than just the text.
-    #[arg(long)]
-    verbose: bool,
 }
 
 pub fn main() -> Result<()> {
@@ -65,48 +61,16 @@ pub fn main() -> Result<()> {
         None
     };
 
-    let device = audio_agent::model::device(args.cpu)?;
-    let model =
-        audio_agent::model::Model::new(&device, args.model, args.model_id, args.revision, false)?;
-    log::debug!("model init done");
-
-    let (sender, receiver): (
-        crossbeam_channel::Sender<AudioChunk>,
-        crossbeam_channel::Receiver<AudioChunk>,
-    ) = crossbeam_channel::unbounded();
-
-    // capture audio
-    std::thread::spawn(move || {
-        let mut audio = AudioDevice::new("default").unwrap();
-        audio.capture(move |msg| {
-            sender.send(msg).unwrap();
-        })
-    });
-
-    let mut dc = Decoder::new(
-        model,
+    // create app and run it
+    let mut app = app::App::new(
+        args.cpu,
+        args.model,
+        args.model_id,
+        args.revision,
         args.seed,
-        &device,
         args.task,
         args.timestamps,
-        args.verbose,
+        args.language,
     )?;
-    // loop to process the audio data forever (until the user stops the program)
-    for i in 0.. {
-        log::debug!("try to receive accumulated data ...");
-        let msg = receiver.recv().unwrap();
-        log::debug!("decoding data len {}", msg.payload().len());
-
-        let mel = dc.pcm_to_mel(msg.payload())?;
-
-        // on the first n iteration, we detect the language and set the language token.
-        if i <= 5 {
-            dc.detect_language(&mel, &args.language);
-        }
-
-        dc.run(&mel, Some(msg.time_window()))?;
-        dc.reset_kv_cache();
-    }
-
-    Ok(())
+    app.run_app()
 }

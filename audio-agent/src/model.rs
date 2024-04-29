@@ -194,11 +194,13 @@ pub fn device(cpu: bool) -> Result<Device> {
     }
 }
 
+#[derive(Debug, Clone)]
 enum ModelKind {
     Normal(whisper::model::Whisper),
     Quantized(whisper::quantized_model::Whisper),
 }
 
+#[derive(Debug, Clone)]
 pub struct Model {
     which: WhichModel,
     device: Device,
@@ -229,7 +231,7 @@ impl Model {
             (None, Some(revision)) => (default_model, revision),
             (None, None) => (default_model, default_revision),
         };
-        println!("try to get model {}/{} ...", model_id, revision);
+        log::debug!("try to get model {}/{} ...", model_id, revision);
         let (config_filename, tokenizer_filename, weights_filename) = {
             let repo = Api::new()?.repo(Repo::with_revision(model_id, RepoType::Model, revision));
             let (config, tokenizer, model) = if quantized {

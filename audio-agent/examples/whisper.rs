@@ -132,10 +132,6 @@ struct Args {
     /// Timestamps mode, this is not fully implemented yet.
     #[arg(long)]
     timestamps: bool,
-
-    /// Print the full DecodingResult structure rather than just the text.
-    #[arg(long)]
-    verbose: bool,
 }
 
 fn main() -> Result<()> {
@@ -181,17 +177,14 @@ fn main() -> Result<()> {
         args.quantized,
     )?;
 
-    let mut dc = audio_agent::decoder::Decoder::new(
-        model,
-        args.seed,
-        &device,
-        args.task,
-        args.timestamps,
-        args.verbose,
-    )?;
+    let mut dc =
+        audio_agent::decoder::Decoder::new(model, &device, args.seed, args.task, args.timestamps)?;
+    if let Some(language) = args.language {
+        dc.set_language(&language);
+    }
+
     let mel = dc.pcm_to_mel(&pcm_data)?;
     println!("loaded mel: {:?}", mel.dims());
-    dc.detect_language(&mel, &args.language);
     dc.run(&mel, None)?;
 
     Ok(())

@@ -16,9 +16,9 @@ pub enum Task {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct DecodingResult {
+pub struct DecodingResult {
+    pub text: String,
     tokens: Vec<u32>,
-    text: String,
     avg_logprob: f64,
     no_speech_prob: f64,
     temperature: f64,
@@ -27,17 +27,17 @@ struct DecodingResult {
 
 #[derive(Debug, Clone)]
 pub struct Segment {
-    start: f64,
-    duration: f64,
-    dr: DecodingResult,
+    pub start: f64,
+    pub duration: f64,
+    pub dr: DecodingResult,
 }
 
+#[derive(Debug, Clone)]
 pub struct Decoder {
     model: Model,
     rng: rand::rngs::StdRng,
     task: Option<Task>,
     timestamps: bool,
-    verbose: bool,
     suppress_tokens: Tensor,
     sot_token: u32,
     transcribe_token: u32,
@@ -53,11 +53,10 @@ impl Decoder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         model: Model,
-        seed: u64,
         device: &Device,
+        seed: u64,
         task: Option<Task>,
         timestamps: bool,
-        verbose: bool,
     ) -> Result<Self> {
         let no_timestamps_token = model.token_id(m::NO_TIMESTAMPS_TOKEN)?;
         // Suppress the notimestamps token when in timestamps mode.
@@ -96,7 +95,6 @@ impl Decoder {
             rng: rand::rngs::StdRng::seed_from_u64(seed),
             task,
             timestamps,
-            verbose,
             suppress_tokens,
             sot_token,
             transcribe_token,
@@ -130,20 +128,32 @@ impl Decoder {
         )
     }
 
-    pub fn detect_language(&mut self, mel: &Tensor, language: &Option<String>) {
-        self.language_token = match (self.model.is_multilingual(), language) {
-            (true, None) => self.model.detect_language(mel).ok(),
-            (true, Some(language)) => match self.model.token_id(&format!("<|{language}|>")) {
-                Ok(token_id) => Some(token_id),
-                Err(_) => None,
-            },
-            // a language cannot be set for non-multilingual models
-            (false, _) => None,
-        };
-        log::debug!("detected language_token: {:?}", self.language_token);
+    pub fn set_language(&mut self, language: &str) {
+        if self.model.is_multilingual() {
+            if let Ok(token_id) = self.model.token_id(&format!("<|{language}|>")) {
+                self.language_token = Some(token_id);
+            }
+        }
     }
 
+    // pub fn detect_language(&mut self, mel: &Tensor, language: &Option<String>) {
+    //     self.language_token = match (self.model.is_multilingual(), language) {
+    //         (true, None) => self.model.detect_language(mel).ok(),
+    //         (true, Some(language)) => match self.model.token_id(&format!("<|{language}|>")) {
+    //             Ok(token_id) => Some(token_id),
+    //             Err(_) => None,
+    //         },
+    //         // a language cannot be set for non-multilingual models
+    //         (false, _) => None,
+    //     };
+    //     log::debug!("detected language_token: {:?}", self.language_token);
+    // }
+
     pub fn run(&mut self, mel: &Tensor, times: Option<(f64, f64)>) -> Result<Vec<Segment>> {
+        if self.model.is_multilingual() && self.language_token.is_none() {
+            self.language_token = self.model.detect_language(mel).ok();
+        }
+
         let (_, _, content_frames) = mel.dims3()?;
         let mut seek = 0;
         let mut segments = vec![];
@@ -156,7 +166,7 @@ impl Decoder {
             let dr = self.decode_with_fallback(&mel_segment)?;
             seek += segment_size;
             if dr.no_speech_prob > m::NO_SPEECH_THRESHOLD && dr.avg_logprob < m::LOGPROB_THRESHOLD {
-                println!("no speech detected, skipping {seek} {dr:?}");
+                log::debug!("no speech detected, skipping {seek} {dr:?}");
                 continue;
             }
             let segment = Segment {
@@ -165,7 +175,7 @@ impl Decoder {
                 dr,
             };
             if self.timestamps {
-                println!(
+                log::info!(
                     "{:.3}s -- {:.3}s",
                     segment.start,
                     segment.start + segment.duration,
@@ -184,7 +194,7 @@ impl Decoder {
                                 .model
                                 .token_decode(&tokens_to_decode, true)
                                 .map_err(DecodeError::Model)?;
-                            println!("  {:.3}s-{:.3}s: {}", prev_timestamp_s, timestamp_s, text);
+                            log::info!("  {:.3}s-{:.3}s: {}", prev_timestamp_s, timestamp_s, text);
                             tokens_to_decode.clear()
                         }
                         prev_timestamp_s = timestamp_s;
@@ -198,17 +208,17 @@ impl Decoder {
                         .token_decode(&tokens_to_decode, true)
                         .map_err(DecodeError::Model)?;
                     if !text.is_empty() {
-                        println!("  {:.3}s-...: {}", prev_timestamp_s, text);
+                        log::info!("  {:.3}s-...: {}", prev_timestamp_s, text);
                     }
                     tokens_to_decode.clear()
                 }
             } else {
                 match times {
                     Some((start, end)) => {
-                        println!("{:.3}s -- {:.3}s: {}", start, end, segment.dr.text)
+                        log::info!("{:.3}s -- {:.3}s: {}", start, end, segment.dr.text)
                     }
                     None => {
-                        println!(
+                        log::info!(
                             "{:.3}s -- {:.3}s: {}",
                             segment.start,
                             segment.start + segment.duration,
@@ -217,9 +227,7 @@ impl Decoder {
                     }
                 }
             }
-            if self.verbose {
-                println!("{seek}: {segment:?}, in {:?}", start.elapsed());
-            }
+            log::trace!("{seek}: {segment:?}, in {:?}", start.elapsed());
             segments.push(segment)
         }
         Ok(segments)
@@ -236,9 +244,6 @@ impl Decoder {
     fn decode(&mut self, mel: &Tensor, t: f64) -> Result<DecodingResult> {
         let model = &mut self.model;
         let audio_features = model.encoder_forward(mel, true)?;
-        if self.verbose {
-            println!("audio features: {:?}", audio_features.dims());
-        }
         let sample_len = model.config().max_target_positions / 2;
         let mut sum_logprob = 0f64;
         let mut no_speech_prob = f64::NAN;
