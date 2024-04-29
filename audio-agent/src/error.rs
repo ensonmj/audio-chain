@@ -4,6 +4,12 @@ use thiserror::Error;
 pub enum DeviceError {
     #[error("failed to get audio device: {0}")]
     Device(#[from] cpal::DevicesError),
+    #[error("failed to build audio stream: {0}")]
+    Build(#[from] cpal::BuildStreamError),
+    #[error("failed to play audio stream: {0}")]
+    Play(#[from] cpal::PlayStreamError),
+    #[error("failed to pause audio stream: {0}")]
+    Pause(#[from] cpal::PauseStreamError),
 }
 
 #[derive(Error, Debug)]

@@ -181,9 +181,6 @@ fn main() -> Result<()> {
         args.quantized,
     )?;
 
-    let config = model.config();
-    let mel_filters = audio_agent::filters::prepare_mel_filters(config.num_mel_bins);
-
     let mut dc = audio_agent::decoder::Decoder::new(
         model,
         args.seed,
@@ -192,7 +189,7 @@ fn main() -> Result<()> {
         args.timestamps,
         args.verbose,
     )?;
-    let mel = dc.pcm_to_mel(&pcm_data, &mel_filters)?;
+    let mel = dc.pcm_to_mel(&pcm_data)?;
     println!("loaded mel: {:?}", mel.dims());
     dc.detect_language(&mel, &args.language);
     dc.run(&mel, None)?;

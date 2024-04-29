@@ -45,6 +45,7 @@ pub struct Decoder {
     eot_token: u32,
     no_speech_token: u32,
     no_timestamps_token: u32,
+    mel_filters: Vec<f32>,
     language_token: Option<u32>,
 }
 
@@ -88,6 +89,7 @@ impl Decoder {
             }
             Some(n) => n,
         };
+        let mel_filters = crate::filters::prepare_mel_filters(model.config().num_mel_bins);
 
         Ok(Self {
             model,
@@ -102,16 +104,27 @@ impl Decoder {
             eot_token,
             no_speech_token,
             no_timestamps_token,
+            mel_filters,
             language_token: None,
         })
     }
 
-    pub fn pcm_to_mel(&self, pcm_data: &[f32], mel_filters: &[f32]) -> candle_core::Result<Tensor> {
+    pub fn pcm_to_mel(&self, pcm_data: &[f32]) -> candle_core::Result<Tensor> {
         let config = self.model.config();
-        let mel = m::audio::pcm_to_mel(config, pcm_data, mel_filters);
+        let mel = m::audio::pcm_to_mel(config, pcm_data, &self.mel_filters);
         let mel_len = mel.len();
         Tensor::from_vec(
             mel,
+            (1, config.num_mel_bins, mel_len / config.num_mel_bins),
+            self.model.device(),
+        )
+    }
+
+    pub fn from_mel(&self, mel_data: &[f32]) -> candle_core::Result<Tensor> {
+        let config = self.model.config();
+        let mel_len = mel_data.len();
+        Tensor::from_slice(
+            mel_data,
             (1, config.num_mel_bins, mel_len / config.num_mel_bins),
             self.model.device(),
         )
@@ -153,7 +166,7 @@ impl Decoder {
             };
             if self.timestamps {
                 println!(
-                    "{:.1}s -- {:.1}s",
+                    "{:.3}s -- {:.3}s",
                     segment.start,
                     segment.start + segment.duration,
                 );
@@ -171,7 +184,7 @@ impl Decoder {
                                 .model
                                 .token_decode(&tokens_to_decode, true)
                                 .map_err(DecodeError::Model)?;
-                            println!("  {:.1}s-{:.1}s: {}", prev_timestamp_s, timestamp_s, text);
+                            println!("  {:.3}s-{:.3}s: {}", prev_timestamp_s, timestamp_s, text);
                             tokens_to_decode.clear()
                         }
                         prev_timestamp_s = timestamp_s;
@@ -185,18 +198,18 @@ impl Decoder {
                         .token_decode(&tokens_to_decode, true)
                         .map_err(DecodeError::Model)?;
                     if !text.is_empty() {
-                        println!("  {:.1}s-...: {}", prev_timestamp_s, text);
+                        println!("  {:.3}s-...: {}", prev_timestamp_s, text);
                     }
                     tokens_to_decode.clear()
                 }
             } else {
                 match times {
                     Some((start, end)) => {
-                        println!("{:.1}s -- {:.1}s: {}", start, end, segment.dr.text)
+                        println!("{:.3}s -- {:.3}s: {}", start, end, segment.dr.text)
                     }
                     None => {
                         println!(
-                            "{:.1}s -- {:.1}s: {}",
+                            "{:.3}s -- {:.3}s: {}",
                             segment.start,
                             segment.start + segment.duration,
                             segment.dr.text,
