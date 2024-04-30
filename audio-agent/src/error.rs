@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum DeviceError {
+pub enum AudioError {
     #[error("failed to get audio device: {0}")]
     Device(#[from] cpal::DevicesError),
     #[error("failed to build audio stream: {0}")]
@@ -30,6 +30,18 @@ pub enum DecodeError {
     Msg(#[from] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     Model(#[from] ModelError),
+    #[error("{0}")]
+    Candle(#[from] candle_core::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum StreamError {
+    #[error("{0}")]
+    Audio(#[from] AudioError),
+    #[error("{0}")]
+    Model(#[from] ModelError),
+    #[error("{0}")]
+    Decode(#[from] DecodeError),
     #[error("{0}")]
     Candle(#[from] candle_core::Error),
 }

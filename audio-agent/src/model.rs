@@ -2,6 +2,7 @@ use candle_core::{Device, IndexOp, Tensor, D};
 use candle_transformers::models::whisper;
 use hf_hub::{api::sync::Api, Repo, RepoType};
 use tokenizers::Tokenizer;
+use tracing::debug;
 
 use crate::error::ModelError;
 type Result<T> = std::result::Result<T, ModelError>;
@@ -231,7 +232,7 @@ impl Model {
             (None, Some(revision)) => (default_model, revision),
             (None, None) => (default_model, default_revision),
         };
-        log::debug!("try to get model {}/{} ...", model_id, revision);
+        debug!("try to get model {}/{} ...", model_id, revision);
         let (config_filename, tokenizer_filename, weights_filename) = {
             let repo = Api::new()?.repo(Repo::with_revision(model_id, RepoType::Model, revision));
             let (config, tokenizer, model) = if quantized {

@@ -2,6 +2,7 @@ use candle_core::{Device, IndexOp, Tensor};
 use candle_nn::ops::softmax;
 use candle_transformers::models::whisper as m;
 use rand::{distributions::Distribution, SeedableRng};
+use tracing::{debug, info, trace};
 
 use crate::model::Model;
 
@@ -50,7 +51,6 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         model: Model,
         device: &Device,
@@ -88,7 +88,7 @@ impl Decoder {
             }
             Some(n) => n,
         };
-        let mel_filters = crate::filters::prepare_mel_filters(model.config().num_mel_bins);
+        let mel_filters = Self::prepare_mel_filters(model.config().num_mel_bins);
 
         Ok(Self {
             model,
@@ -166,16 +166,16 @@ impl Decoder {
             let dr = self.decode_with_fallback(&mel_segment)?;
             seek += segment_size;
             if dr.no_speech_prob > m::NO_SPEECH_THRESHOLD && dr.avg_logprob < m::LOGPROB_THRESHOLD {
-                log::debug!("no speech detected, skipping {seek} {dr:?}");
+                debug!("no speech detected, skipping {seek} {dr:?}");
                 continue;
             }
-            let segment = Segment {
+            let mut segment = Segment {
                 start: time_offset,
                 duration: segment_duration,
                 dr,
             };
             if self.timestamps {
-                log::info!(
+                info!(
                     "{:.3}s -- {:.3}s",
                     segment.start,
                     segment.start + segment.duration,
@@ -194,7 +194,7 @@ impl Decoder {
                                 .model
                                 .token_decode(&tokens_to_decode, true)
                                 .map_err(DecodeError::Model)?;
-                            log::info!("  {:.3}s-{:.3}s: {}", prev_timestamp_s, timestamp_s, text);
+                            info!("  {:.3}s-{:.3}s: {}", prev_timestamp_s, timestamp_s, text);
                             tokens_to_decode.clear()
                         }
                         prev_timestamp_s = timestamp_s;
@@ -208,17 +208,19 @@ impl Decoder {
                         .token_decode(&tokens_to_decode, true)
                         .map_err(DecodeError::Model)?;
                     if !text.is_empty() {
-                        log::info!("  {:.3}s-...: {}", prev_timestamp_s, text);
+                        info!("  {:.3}s-...: {}", prev_timestamp_s, text);
                     }
                     tokens_to_decode.clear()
                 }
             } else {
                 match times {
                     Some((start, end)) => {
-                        log::info!("{:.3}s -- {:.3}s: {}", start, end, segment.dr.text)
+                        segment.start = start;
+                        segment.duration = end - start;
+                        info!("{:.3}s -- {:.3}s: {}", start, end, segment.dr.text)
                     }
                     None => {
-                        log::info!(
+                        info!(
                             "{:.3}s -- {:.3}s: {}",
                             segment.start,
                             segment.start + segment.duration,
@@ -227,7 +229,7 @@ impl Decoder {
                     }
                 }
             }
-            log::trace!("{seek}: {segment:?}, in {:?}", start.elapsed());
+            trace!("{seek}: {segment:?}, in {:?}", start.elapsed());
             segments.push(segment)
         }
         Ok(segments)
@@ -239,6 +241,24 @@ impl Decoder {
 
     pub fn model(&mut self) -> &mut Model {
         &mut self.model
+    }
+}
+
+impl Decoder {
+    fn prepare_mel_filters(num_mel_bins: usize) -> Vec<f32> {
+        let mel_bytes = match num_mel_bins {
+            80 => include_bytes!("../melfilters.bytes").as_slice(),
+            128 => include_bytes!("../melfilters128.bytes").as_slice(),
+            nmel => unimplemented!("unexpected num_mel_bins {nmel}"),
+        };
+
+        let mut mel_filters = vec![0f32; mel_bytes.len() / 4];
+        <byteorder::LittleEndian as byteorder::ByteOrder>::read_f32_into(
+            mel_bytes,
+            &mut mel_filters,
+        );
+
+        mel_filters
     }
 
     fn decode(&mut self, mel: &Tensor, t: f64) -> Result<DecodingResult> {

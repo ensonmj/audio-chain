@@ -5,7 +5,6 @@ use std::{
 
 use anyhow::Result;
 use crossbeam_channel::{unbounded, Receiver, Sender};
-// use candle_transformers::models::whisper;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -14,21 +13,28 @@ use crossterm::{
 use ratatui::{prelude::*, widgets::*};
 
 use audio_agent::{
+    audio::AudioChunk,
     decoder::{Segment, Task},
-    device::AudioChunk,
     model::WhichModel,
+    stream::{Stream, StreamItem},
 };
 
-use crate::decoder::{AppMsg, Decoder};
-
 pub struct App {
-    decoder: Decoder,
+    // stream: Stream,
     segments: Vec<Segment>,
 }
 
 impl App {
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            // stream,
+            segments: vec![],
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn run(
+        &mut self,
         cpu: bool,
         model: WhichModel,
         model_id: Option<String>,
@@ -37,18 +43,7 @@ impl App {
         task: Option<Task>,
         timestamps: bool,
         language: Option<String>,
-    ) -> Result<Self> {
-        let decoder = Decoder::new(
-            cpu, model, model_id, revision, seed, task, timestamps, language,
-        )?;
-
-        Ok(Self {
-            decoder,
-            segments: vec![],
-        })
-    }
-
-    pub fn run_app(&mut self) -> Result<()> {
+    ) -> Result<()> {
         // setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -56,8 +51,15 @@ impl App {
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
-        let (tx, rx): (Sender<AppMsg>, Receiver<AppMsg>) = unbounded();
-        self.decoder.decode(move |msg| tx.send(msg).unwrap())?;
+        let (tx, rx): (Sender<StreamItem>, Receiver<StreamItem>) = unbounded();
+        let stream = Stream::new(
+            cpu, model, model_id, revision, seed, task, timestamps, language,
+        )?;
+        std::thread::spawn(move || {
+            for msg in stream.text_stream().unwrap() {
+                tx.send(msg).unwrap();
+            }
+        });
         let res = self.event_loop(&mut terminal, rx);
 
         // restore terminal
@@ -75,12 +77,14 @@ impl App {
     fn event_loop(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        receiver: crossbeam_channel::Receiver<AppMsg>,
+        receiver: crossbeam_channel::Receiver<StreamItem>,
     ) -> Result<(), anyhow::Error> {
+        terminal.draw(|f| self.ui(f, AudioChunk::default(), vec![]))?;
+
         let tick_rate = Duration::from_millis(250);
         let mut last_tick = Instant::now();
         loop {
-            if let Ok(AppMsg { wave, segments }) = receiver.recv_timeout(tick_rate) {
+            if let Ok(StreamItem { wave, segments }) = receiver.recv_timeout(tick_rate) {
                 terminal.draw(|f| self.ui(f, wave, segments))?;
             }
 
@@ -145,7 +149,7 @@ impl App {
             )
             .x_axis(
                 Axis::default()
-                    .title("Sample")
+                    // .title("Sample")
                     .style(Style::default().fg(Color::Gray))
                     .labels(x_labels)
                     .bounds([start, end]),
@@ -153,8 +157,8 @@ impl App {
             .y_axis(
                 Axis::default()
                     .style(Style::default().fg(Color::Gray))
-                    .labels(vec!["-0.2".bold(), "0".into(), "0.2".bold()])
-                    .bounds([-0.2, 0.2]),
+                    .labels(vec!["-0.25".bold(), "0".into(), "0.25".bold()])
+                    .bounds([-0.25, 0.25]),
             );
 
         f.render_widget(chart, area);

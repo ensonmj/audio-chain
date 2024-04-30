@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
+use tracing_subscriber::prelude::*;
 
 use audio_agent::model::WhichModel;
 
 mod app;
-mod decoder;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -22,7 +22,7 @@ struct Args {
     revision: Option<String>,
 
     /// The model to be used, can be tiny, small, medium.
-    #[arg(long, default_value = "tiny.en")]
+    #[arg(long, default_value = "base.en")]
     model: WhichModel,
 
     /// The seed to use when generating random samples.
@@ -49,11 +49,9 @@ struct Args {
 }
 
 pub fn main() -> Result<()> {
-    tracing_log::LogTracer::init()?;
-
     let args = Args::parse();
+
     let _guard = if args.tracing {
-        use tracing_subscriber::prelude::*;
         let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new().build();
         tracing_subscriber::registry().with(chrome_layer).init();
         Some(guard)
@@ -62,7 +60,8 @@ pub fn main() -> Result<()> {
     };
 
     // create app and run it
-    let mut app = app::App::new(
+    let mut app = app::App::new()?;
+    app.run(
         args.cpu,
         args.model,
         args.model_id,
@@ -71,6 +70,5 @@ pub fn main() -> Result<()> {
         args.task,
         args.timestamps,
         args.language,
-    )?;
-    app.run_app()
+    )
 }
